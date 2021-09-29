@@ -852,6 +852,7 @@ public class Director extends AbstractDirector {
                         ESAAsset esaa = ((ESAAsset) installAsset);
                         if (esaa.isPublic()) {
                             log(Level.FINE, installAsset.installedLogMsg());
+                            log(Level.FINE, "ESA file installed from : " + esaa.getAsset().getAbsolutePath());
                         }
                     } else {
                         log(Level.FINE, installAsset.installedLogMsg());
