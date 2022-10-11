@@ -32,7 +32,6 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Hashtable;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -69,13 +68,10 @@ public class ArtifactDownloader implements AutoCloseable {
 
     private final ExecutorService executor;
 
-    private Map<String, File> mavenCoordMap = null;
-
     ArtifactDownloader() {
         this.downloadedFiles = Collections.synchronizedList(new ArrayList<>());
         this.progressBar = ProgressBar.getInstance();
         this.executor = Executors.newFixedThreadPool(ArtifactDownloaderUtils.getNumThreads());
-        this.mavenCoordMap = new Hashtable<>();
     }
 
     private Future<String> submitDownloadRequest(String coords, String fileType, String dLocation, MavenRepository repository) {
@@ -221,9 +217,6 @@ public class ArtifactDownloader implements AutoCloseable {
             downloadInternal(uriLoc, fileLoc, mavenRepository);
 
             downloadedFiles.add(fileLoc);
-            if (filetype.equals("esa")) {
-                mavenCoordMap.put(mavenCoords, fileLoc);
-            }
             boolean someChecksumExists = false;
             boolean checksumFail = false;
             boolean checksumSuccess = false;
@@ -249,7 +242,6 @@ public class ArtifactDownloader implements AutoCloseable {
                 if (checksumFail) {
                     ArtifactDownloaderUtils.deleteFiles(downloadedFiles, dLocation, fileLoc);
                     downloadedFiles.clear();
-                    mavenCoordMap.clear();
                     throw ExceptionUtils.createByKey("ERROR_CHECKSUM_FAILED_MAVEN", filename);
                 }
             } else {
@@ -476,13 +468,11 @@ public class ArtifactDownloader implements AutoCloseable {
      *
      * @return esaFiles
      */
-    public List<File> getDownloadedEsas(List<String> featureList) {
+    public List<File> getDownloadedEsas() {
         List<File> esaFiles = new ArrayList<File>();
-        for (String coord : featureList) {
-            //return downloaded esa files in the same order as featureList
-            File artifactPath = mavenCoordMap.get(coord);
-            if (artifactPath != null) {
-                esaFiles.add(artifactPath);
+        for (File f : downloadedFiles) {
+            if (f.getName().endsWith(".esa")) {
+                esaFiles.add(f);
             }
         }
         return esaFiles;

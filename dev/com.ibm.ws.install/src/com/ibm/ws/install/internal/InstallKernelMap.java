@@ -1209,7 +1209,7 @@ public class InstallKernelMap implements Map {
                 this.put(ACTION_ERROR_MESSAGE, ExceptionUtils.createByKey("ERROR_FAILED_TO_DOWNLOAD_ASSETS_FROM_REPO", "required", "feature(s)", repos).getMessage());
                 return null;
             }
-            return artifactDownloader.getDownloadedEsas(featureList);
+            return artifactDownloader.getDownloadedEsas();
         }
     }
 
@@ -1581,31 +1581,38 @@ public class InstallKernelMap implements Map {
         return singleJson;
     }
 
+    /**
+     * Downloads feature ESA file from Maven Central if the feature doesn't exist in local Maven repo
+     * resolvedFeatures contains ordered list of features to install in maven coord (groupID:artifactID:version)
+     *
+     * @return foundFeatures returns the list of feature ESAs (file path) in the same order as resolvedFeatures
+     */
     @SuppressWarnings("unchecked")
     private Collection<File> downloadEsas() {
         String fromRepo = getDownloadDir((String) data.get(FROM_REPO));
         File rootDir = new File(fromRepo);
-        Collection<String> resolvedFeatures = (List<String>) data.get(DOWNLOAD_ARTIFACT_LIST);
+        List<String> resolvedFeatures = (List<String>) data.get(DOWNLOAD_ARTIFACT_LIST);
 
         Map<String, List> artifactsMap = fetchArtifactsFromLocalRepository(rootDir, resolvedFeatures, ".esa");
         List<File> foundFeatures = artifactsMap.get("foundArtifacts");
         List<String> missingFeatures = artifactsMap.get("missingArtifacts");
         if (foundFeatures.size() != resolvedFeatures.size() && !missingFeatures.isEmpty()) {
-            List<Integer> missingFeatureIndexes = artifactsMap.get("missingArtifactIndexes");
+
             List<File> downloadedFeatures = downloadFeatures(missingFeatures);
             if (downloadedFeatures == null) {
-                return null;
-            } else {
-                insertElementsIntoList(foundFeatures, downloadedFeatures, missingFeatureIndexes);
+                return Collections.emptyList();
             }
+
             // some increment left over
             double increment = ((progressBar.getMethodIncrement("fetchArtifacts") / resolvedFeatures.size()) * downloadedFeatures.size());
             updateProgress(increment);
             fine("Downloaded the following features from the remote maven repository:" + downloadedFeatures);
+
+            return artifactsMap.get("allArtifactsPaths");
         } else {
             data.put(CLEANUP_NEEDED, false);
+            return foundFeatures;
         }
-        return foundFeatures;
 
     }
 
@@ -1613,70 +1620,64 @@ public class InstallKernelMap implements Map {
      * Returns a hashmap containing artifacts found as well as the order of the artifacts not found.
      * The found artifacts can be accessed using key: foundArtifacts
      * The missing artifacts can be accessed using key: missingArtifacts
-     * The missing artifact indexees can be accessed using key: missingArtifactIndexes
-     * TODO maybe make this return an object
+     * The file path of ordered artifacts (includes found and missing) can be accessed using key: allArtifactsPaths
      *
      * @param rootDir   the local maven repository
      * @param artifacts a list of artifacts in the form groupId:artifactId:version or esa file
      * @param extension file extension
      * @return a map containing the found and not found artifacts.
      */
-    private Map<String, List> fetchArtifactsFromLocalRepository(File rootDir, Collection<String> artifacts, String extension) {
-        List<String> artifactsClone = new ArrayList<>(artifacts);
+    private Map<String, List> fetchArtifactsFromLocalRepository(File rootDir, List<String> artifacts, String extension) {
         List<File> foundArtifacts = new ArrayList<>();
-        List<Integer> missingArtifactIndexes = new ArrayList<>();
-        int index = 0;
+        List<String> missingArtifacts = new ArrayList<>();
+        List<File> allArtifactsPaths = new ArrayList<>();
         double increment = (progressBar.getMethodIncrement("fetchArtifacts") / artifacts.size());
+        File dRootDir;
+        Boolean cleanupNeeded = (Boolean) data.get(CLEANUP_NEEDED);
+        if (cleanupNeeded != null && cleanupNeeded) {
+            dRootDir = new File(TEMP_DIRECTORY);
+        } else {
+            dRootDir = rootDir;
+        }
 
-        for (String artifact : artifacts) {
+        for (int i = 0; i < artifacts.size(); i++) {
+            String artifact = artifacts.get(i);
             fine("Processing artifact: " + artifact);
             Path artifactPath;
+            Path downloadPath;
+
             if (isValidEsa(artifact)) {
                 artifactPath = Paths.get(artifact);
+                downloadPath = artifactPath;
             } else {
                 String[] coord = artifact.split(":");
                 String groupId = coord[0];
                 String artifactName = coord[1];
                 String version = coord[2];
-                File groupDir = new File(rootDir, groupId.replace(".", "/"));
-                if (!groupDir.exists()) {
-                    missingArtifactIndexes.add(index);
-                    index += 1;
-                    continue;
-                }
+                String groupDir = groupId.replace(".", "/");
 
                 String artifactFileName = artifactName + "-" + version + extension;
-                artifactPath = Paths.get(groupDir.getAbsolutePath().toString(), artifactName, version, artifactFileName);
+                artifactPath = Paths.get(rootDir.getAbsolutePath(), groupDir, artifactName, version, artifactFileName);
+                downloadPath = Paths.get(dRootDir.getAbsolutePath(), groupDir, artifactName, version, artifactFileName);
             }
 
             if (Files.isRegularFile(artifactPath)) {
                 foundArtifacts.add(artifactPath.toFile());
-                artifactsClone.remove(artifact);
                 updateProgress(increment);
                 fine("Found Artifact at path: " + artifactPath.toString());
-
+                allArtifactsPaths.add(artifactPath.toFile());
             } else {
-                missingArtifactIndexes.add(index);
+                missingArtifacts.add(artifact);
+                allArtifactsPaths.add(downloadPath.toFile());
             }
-
-            index += 1;
         }
+
         Map<String, List> artifactsMap = new HashMap<>();
         artifactsMap.put("foundArtifacts", foundArtifacts);
-        artifactsMap.put("missingArtifacts", artifactsClone);
-        artifactsMap.put("missingArtifactIndexes", missingArtifactIndexes);
+        artifactsMap.put("missingArtifacts", missingArtifacts);
+        artifactsMap.put("allArtifactsPaths", allArtifactsPaths);
 
         return artifactsMap;
-    }
-
-    private <T> void insertElementsIntoList(List<T> target, List<T> elements, List<Integer> indexes) {
-        int index = 0;
-        for (T obj : elements) {
-            // insert the element into its respective position
-            target.add(indexes.get(index), obj);
-            index += 1;
-        }
-
     }
 
     private boolean isValidEsa(String fileName) {
@@ -2016,7 +2017,7 @@ public class InstallKernelMap implements Map {
         String licenseCoord = getLicenseToUpgrade(fromRepo, featureList);
         fine("licenseCoord to upgrade to: " + licenseCoord);
         //download that license zip if it isn't in the repo and unpack it to the license folder
-        Collection<String> upgradeFileObjects = new ArrayList<String>();
+        List<String> upgradeFileObjects = new ArrayList<>();
 
         upgradeFileObjects.add(licenseCoord);
 
